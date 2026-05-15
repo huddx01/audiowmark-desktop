@@ -21,8 +21,8 @@ KEYS_SUBDIR            = "keys"
 HMAC_SUBDIR            = "hmac"
 KEY_EXT                = ".key"
 HMAC_EXT               = ".hmac"
-SETTINGS_ORG           = "AudiowmarkPro"
-SETTINGS_APP           = "AudiowmarkPro"
+SETTINGS_ORG           = "Audiowmark-desktop"
+SETTINGS_APP           = "Audiowmark-desktop"
 SETTINGS_KEY_DIR       = "keys_directory"
 PLACEHOLDER_NO_KEYS    = "(no keys — add one in Key Management)"
 PLACEHOLDER_NO_SECRETS = "(no secrets — add one in Key Management)"
@@ -30,7 +30,7 @@ PLACEHOLDER_NO_SECRETS = "(no secrets — add one in Key Management)"
 HELP_HTML = """
 <html><body style="font-family: sans-serif; font-size: 13px; margin: 16px;">
 
-<h2 style="color:#2b78e4;">Audiowmark Pro — User Guide</h2>
+<h2 style="color:#2b78e4;">Audiowmark-desktop — User Guide</h2>
 
 <h3>Overview</h3>
 <p>
@@ -418,7 +418,7 @@ class AudiowmarkGUI(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        self.setWindowTitle("Audiowmark Pro")
+        self.setWindowTitle("Audiowmark-desktop")
         self.resize(820, 740)
 
         main_layout = QVBoxLayout()
