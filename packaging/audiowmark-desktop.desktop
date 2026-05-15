@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Audiowmark Desktop
+Comment=Add and detect invisible audio watermarks
+Exec=audiowmark-desktop
+Icon=audiowmark-desktop
+Type=Application
+Categories=Audio;AudioVideo;
+Keywords=watermark;audio;steganography;

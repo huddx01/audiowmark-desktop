@@ -1,0 +1,12 @@
+Package: audiowmark-desktop
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: huddx01
+Uploaders: Sojuzstudio
+Homepage: https://github.com/huddx01/audiowmark-desktop
+Description: Desktop GUI for audiowmark audio watermarking
+ A PyQt6-based desktop application for adding and detecting
+ invisible audio watermarks using audiowmark. Includes a
+ bundled audiowmark binary — no separate installation required.
+Depends: python3, python3-pyqt6
+Recommends: ffmpeg
