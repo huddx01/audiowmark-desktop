@@ -25,7 +25,7 @@ OUT_DIR="$REPO_ROOT/dist"
 
 echo "Building $PKG_NAME ..."
 
-# ── 1. Staging structure ──────────────────────────────────────────────────────
+# -- 1. Staging structure ------------------------------------------------------
 rm -rf "$STAGING"
 install -d \
     "$STAGING/DEBIAN" \
@@ -40,13 +40,13 @@ install -d \
     "$STAGING/usr/share/icons/hicolor/256x256/apps" \
     "$STAGING/usr/share/icons/hicolor/512x512/apps"
 
-# ── 2. DEBIAN control ─────────────────────────────────────────────────────────
+# -- 2. DEBIAN control ---------------------------------------------------------
 sed "s/@VERSION@/$VERSION/g; s/@ARCH@/$ARCH/g" \
     "$SCRIPT_DIR/DEBIAN/control.in" > "$STAGING/DEBIAN/control"
 
 install -m 0755 "$SCRIPT_DIR/DEBIAN/postinst" "$STAGING/DEBIAN/postinst"
 
-# ── 3. App files ──────────────────────────────────────────────────────────────
+# -- 3. App files --------------------------------------------------------------
 install -m 0755 "$SCRIPT_DIR/launcher.sh"        "$STAGING/usr/bin/audiowmark-desktop"
 install -m 0644 "$REPO_ROOT/src/audiowmark_gui.py" "$STAGING/usr/lib/audiowmark-desktop/audiowmark_gui.py"
 install -m 0644 "$SCRIPT_DIR/audiowmark-desktop.desktop" "$STAGING/usr/share/applications/audiowmark-desktop.desktop"
@@ -58,7 +58,7 @@ for SIZE in 16 32 48 64 128 256 512; do
     fi
 done
 
-# ── 4. Build audiowmark from source ──────────────────────────────────────────
+# -- 4. Build audiowmark from source ------------------------------------------
 BUILD_TMP="$(mktemp -d)"
 trap 'rm -rf "$BUILD_TMP"' EXIT
 
@@ -75,11 +75,11 @@ popd
 install -m 0755 "$BUILD_TMP/install/bin/audiowmark" \
     "$STAGING/usr/lib/audiowmark-desktop/audiowmark"
 
-# ── 5. Installed-Size ─────────────────────────────────────────────────────────
+# -- 5. Installed-Size ---------------------------------------------------------
 INSTALLED_KB=$(du -sk "$STAGING" | cut -f1)
 echo "Installed-Size: $INSTALLED_KB" >> "$STAGING/DEBIAN/control"
 
-# ── 6. Build .deb ─────────────────────────────────────────────────────────────
+# -- 6. Build .deb -------------------------------------------------------------
 mkdir -p "$OUT_DIR"
 fakeroot dpkg-deb --build "$STAGING" "$OUT_DIR/${PKG_NAME}.deb"
 
