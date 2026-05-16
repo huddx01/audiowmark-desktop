@@ -17,6 +17,8 @@ Embeds invisible, cryptographically secured watermarks into audio files. The wat
 - **Cover art preservation** - embedded album art is carried through to the output without re-encoding
 - **Key rotation** - multiple keys supported; all are tried automatically on decode
 
+![Audiowmark Desktop](doc/Audiowmark%20Desktop.png)
+
 ## Security model
 
 | Property                                | This tool                            |
@@ -54,10 +56,24 @@ Download the matching `.dmg` for your Mac from the [Releases](../../releases) pa
 
 - Requires macOS 14 (Sonoma) or later
 - `audiowmark` and `ffmpeg` are bundled - no separate installation needed
-- If macOS shows "app is damaged": the app is not notarized yet. Run once in Terminal to clear the quarantine flag:
-  ```bash
-  xattr -rd com.apple.quarantine "/Applications/Audiowmark Desktop.app"
-  ```
+
+> **Note:** The app is not notarized, as Apple requires a paid ($99/year) developer account for this.
+> On first launch macOS may show "app is damaged". There are two ways to fix this:
+>
+> **Option 1 - Terminal** (quickest): run once to clear the quarantine flag:
+> ```bash
+> xattr -rd com.apple.quarantine "/Applications/Audiowmark Desktop.app"
+> ```
+>
+> **Option 2 - System Settings:** if macOS shows this dialog:
+>
+> ![macOS Gatekeeper warning](doc/macOS_gatekeeper.png)
+>
+> Click *Done*, then open **System Settings - Privacy & Security** and click **Open Anyway**:
+>
+> ![macOS Open Anyway](doc/macOS_openAnnyway.png)
+>
+> Then confirm with **Open Anyway** once more.
 
 ### Linux - via .deb package (recommended)
 
@@ -95,7 +111,7 @@ python3 src/audiowmark_gui.py
 
 ## Building locally
 
-### macOS .pkg
+### macOS .dmg
 
 ```bash
 bash packaging/build_mac.sh 1.0.0
