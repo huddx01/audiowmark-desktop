@@ -1,4 +1,5 @@
 import sys
+import os
 import re
 import json
 import hmac
@@ -6,6 +7,9 @@ import hashlib
 import secrets
 import subprocess
 from pathlib import Path
+
+if getattr(sys, 'frozen', False):
+    os.environ['PATH'] = sys._MEIPASS + os.pathsep + os.environ.get('PATH', '')
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton,

@@ -219,3 +219,7 @@ __marimo__/
 
 # macOS system files
 .DS_Store
+
+# Xcode user-specific data
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
