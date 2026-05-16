@@ -45,10 +45,13 @@ sed "s/@VERSION@/$VERSION/g; s/@ARCH@/$ARCH/g" \
     "$SCRIPT_DIR/DEBIAN/control.in" > "$STAGING/DEBIAN/control"
 
 install -m 0755 "$SCRIPT_DIR/DEBIAN/postinst" "$STAGING/DEBIAN/postinst"
+install -d "$STAGING/usr/share/doc/audiowmark-desktop"
+install -m 0644 "$SCRIPT_DIR/DEBIAN/copyright" "$STAGING/usr/share/doc/audiowmark-desktop/copyright"
 
 # -- 3. App files --------------------------------------------------------------
 install -m 0755 "$SCRIPT_DIR/launcher.sh"        "$STAGING/usr/bin/audiowmark-desktop"
 install -m 0644 "$REPO_ROOT/src/audiowmark_gui.py" "$STAGING/usr/lib/audiowmark-desktop/audiowmark_gui.py"
+echo "$VERSION" > "$STAGING/usr/lib/audiowmark-desktop/version.txt"
 install -m 0644 "$SCRIPT_DIR/audiowmark-desktop.desktop" "$STAGING/usr/share/applications/audiowmark-desktop.desktop"
 
 for SIZE in 16 32 48 64 128 256 512; do

@@ -17,7 +17,13 @@ APP_NAME="Audiowmark Desktop"
 OUT_DIR="$REPO_ROOT/dist"
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
 
-echo "Building '$APP_NAME' $VERSION for macOS ..."
+case "$(uname -m)" in
+    arm64)  ARCH="arm64" ;;
+    x86_64) ARCH="x86_64" ;;
+    *)      ARCH="$(uname -m)" ;;
+esac
+
+echo "Building '$APP_NAME' $VERSION for macOS ($ARCH) ..."
 
 # -- 1. Homebrew ---------------------------------------------------------------
 if ! command -v brew &>/dev/null; then
@@ -47,7 +53,7 @@ curl -fsSL \
     | tar -xJf - -C "$BUILD_TMP"
 
 pushd "$BUILD_TMP/zita-resampler-${ZITA_VERSION}"
-# Compile sources directly — the upstream Makefile targets .so (Linux only)
+# Compile sources directly - the upstream Makefile targets .so (Linux only)
 g++ -O2 -fPIC -std=c++14 -c source/*.cc -I source/
 ar rcs "$INSTALL_PREFIX/lib/libzita-resampler.a" ./*.o
 # Build dylib for runtime linking by audiowmark
@@ -93,9 +99,13 @@ popd
 echo "Building .app bundle ..."
 cd "$REPO_ROOT"
 
+echo "$VERSION" > src/version.txt
+
 QTBASE_PREFIX="$($BREW --prefix qtbase)"
 QT_PLUGINS="$QTBASE_PREFIX/share/qt/plugins"
 PYINSTALLER="$BREW_PREFIX/bin/pyinstaller"
+FFMPEG_BIN="$($BREW --prefix ffmpeg)/bin/ffmpeg"
+FFPROBE_BIN="$($BREW --prefix ffmpeg)/bin/ffprobe"
 
 "$PYINSTALLER" \
     --windowed \
@@ -106,7 +116,46 @@ PYINSTALLER="$BREW_PREFIX/bin/pyinstaller"
     --add-binary "$QT_PLUGINS/styles/libqmacstyle.dylib:PyQt6/Qt6/plugins/styles/" \
     --add-binary "$INSTALL_PREFIX/bin/audiowmark:." \
     --add-binary "$INSTALL_PREFIX/lib/libzita-resampler.dylib:." \
+    --add-binary "$FFMPEG_BIN:." \
+    --add-binary "$FFPROBE_BIN:." \
+    --add-data "src/version.txt:." \
     -y \
     src/audiowmark_gui.py
 
-echo "Done: $OUT_DIR/$APP_NAME.app"
+# ── 7. Inject Info.plist ──────────────────────────────────────────────────────
+echo "Injecting Info.plist ..."
+APP_BUNDLE="$OUT_DIR/$APP_NAME.app"
+PLIST="$APP_BUNDLE/Contents/Info.plist"
+RESOURCES="$APP_BUNDLE/Contents/Resources"
+PLISTBUDDY=/usr/libexec/PlistBuddy
+
+# PyInstaller names the icon icon-windowed.icns; rename to AppIcon.icns
+if [ -f "$RESOURCES/icon-windowed.icns" ]; then
+    mv "$RESOURCES/icon-windowed.icns" "$RESOURCES/AppIcon.icns"
+fi
+
+cp "$SCRIPT_DIR/mac/Info.plist" "$PLIST"
+$PLISTBUDDY -c "Set :CFBundleVersion $VERSION"            "$PLIST"
+$PLISTBUDDY -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+
+# Ad-hoc sign after all bundle modifications so Gatekeeper accepts it
+echo "Code-signing bundle ..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+
+# ── 8. Build .dmg ─────────────────────────────────────────────────────────────
+echo "Building .dmg ..."
+DMG_STAGING="$BUILD_TMP/dmg-root"
+mkdir -p "$DMG_STAGING"
+# ditto preserves APFS compression and extended attributes; cp -r does not
+ditto "$APP_BUNDLE" "$DMG_STAGING/$APP_NAME.app"
+ln -s /Applications "$DMG_STAGING/Applications"
+
+DMG_FILE="$OUT_DIR/audiowmark-desktop_${VERSION}_macos_${ARCH}.dmg"
+hdiutil create \
+    -volname "Audiowmark Desktop $VERSION" \
+    -srcfolder "$DMG_STAGING" \
+    -ov \
+    -format UDZO \
+    "$DMG_FILE"
+
+echo "Done: $DMG_FILE"

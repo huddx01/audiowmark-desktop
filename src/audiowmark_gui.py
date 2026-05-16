@@ -6,6 +6,7 @@ import hmac
 import hashlib
 import secrets
 import subprocess
+import tempfile
 from pathlib import Path
 
 if getattr(sys, 'frozen', False):
@@ -13,7 +14,7 @@ if getattr(sys, 'frozen', False):
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton,
-    QVBoxLayout, QHBoxLayout, QFileDialog, QTextEdit, QTabWidget,
+    QVBoxLayout, QHBoxLayout, QFileDialog, QTextEdit, QTextBrowser, QTabWidget,
     QMessageBox, QDoubleSpinBox, QGroupBox, QFormLayout, QListWidget,
     QListWidgetItem, QSplitter, QInputDialog, QComboBox
 )
@@ -28,24 +29,37 @@ HMAC_EXT               = ".hmac"
 SETTINGS_ORG           = "Audiowmark-desktop"
 SETTINGS_APP           = "Audiowmark-desktop"
 SETTINGS_KEY_DIR       = "keys_directory"
-PLACEHOLDER_NO_KEYS    = "(no keys — add one in Key Management)"
-PLACEHOLDER_NO_SECRETS = "(no secrets — add one in Key Management)"
+PLACEHOLDER_NO_KEYS    = "(no keys - add one in Key Management)"
+PLACEHOLDER_NO_SECRETS = "(no secrets - add one in Key Management)"
 
-HELP_HTML = """
+def _read_version():
+    base = Path(sys._MEIPASS) if getattr(sys, 'frozen', False) else Path(__file__).parent
+    try:
+        return (base / "version.txt").read_text().strip()
+    except Exception:
+        return "0.0.1"
+
+APP_VERSION = _read_version()
+
+HELP_HTML = f"""
 <html><body style="font-family: sans-serif; font-size: 13px; margin: 16px;">
 
-<h2 style="color:#2b78e4;">Audiowmark-desktop — User Guide</h2>
+<h2 style="color:#2b78e4;">Audiowmark Desktop - User Guide</h2>
 
 <h3>Overview</h3>
 <p>
-This tool embeds invisible, cryptographically secured watermarks into audio files using
+<b>Audiowmark Desktop</b> embeds invisible, cryptographically secured watermarks into audio files using
 <b>audiowmark</b> (Stefan Westerfeld). The watermark survives MP3/OGG re-encoding at
 128 kbit/s or higher and can be detected from a copy without the original file.
 </p>
 <p>
-Each watermark payload is a <b>HMAC-SHA256</b> of your metadata — not the metadata itself.
+Each watermark payload is a <b>HMAC-SHA256</b> of your metadata - not the metadata itself.
 This means the payload stored in the audio is a one-way cryptographic hash that cannot
 be reversed to recover your text, and cannot be forged without your HMAC secret.
+</p>
+<p>
+Audio tags (title, artist, album, genre, etc.) and embedded cover art from the input file
+are automatically preserved in the output.
 </p>
 
 <hr/>
@@ -54,13 +68,14 @@ be reversed to recover your text, and cannot be forged without your HMAC secret.
 <table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">
   <tr><th>Dependency</th><th>Purpose</th><th>Notes</th></tr>
   <tr><td><b>audiowmark</b></td><td>Core watermarking engine</td><td>Must be in PATH</td></tr>
-  <tr><td><b>ffmpeg</b></td><td>MP3 input pre-processing</td><td>Required for MP3 files only</td></tr>
+  <tr><td><b>ffmpeg + ffprobe</b></td><td>MP3 processing, tag and cover art preservation</td><td>Required for MP3 input/output; optional for WAV/FLAC (enables tag and cover art copy)</td></tr>
   <tr><td>Python 3 + PyQt6</td><td>GUI runtime</td><td>pip install pyqt6</td></tr>
 </table>
 <p style="color:#c0392b;"><b>Note:</b> For MP3 input, audiowmark internally uses libmpg123 which cannot
 always determine the exact decoded frame count upfront. This causes silent output truncation.
-The fix is to route MP3 through ffmpeg via pipe — this tool does that automatically.
-Without ffmpeg, MP3 input is disabled.</p>
+Audiowmark Desktop works around this by converting MP3 to a temporary WAV via ffmpeg before processing.
+MP3 output is re-encoded by ffmpeg at the original bitrate after watermarking.
+Without ffmpeg, MP3 input and output are disabled, and tag/cover art preservation is unavailable.</p>
 
 <hr/>
 
@@ -68,22 +83,22 @@ Without ffmpeg, MP3 input is disabled.</p>
 
 <h4>File Selection</h4>
 <ul>
-  <li><b>Input File</b> — WAV, MP3, or FLAC. MP3 requires ffmpeg (see above).</li>
-  <li><b>Output File</b> — WAV or FLAC. Set automatically to
-      <code>inputname_watermarked.ext</code> when you select the input.
-      MP3 input defaults to WAV output since MP3 write support depends on
-      libsndfile version.</li>
+  <li><b>Input File</b> - WAV, MP3, or FLAC. MP3 requires ffmpeg (see above).</li>
+  <li><b>Output File</b> - WAV, MP3, FLAC, or AIFF. Set automatically to
+      <code>inputname_watermarked.ext</code> when you select the input, matching
+      the input format. You can override this to any supported output format -
+      format conversion (e.g. WAV to MP3, MP3 to WAV, FLAC to MP3) is fully supported.</li>
 </ul>
 
 <h4>Watermark Metadata</h4>
 <p>These fields describe what the watermark identifies. They are never stored
-in the audio file directly — only their HMAC hash is embedded.</p>
+in the audio file directly - only their HMAC hash is embedded.</p>
 <ul>
-  <li><b>Copyright *</b> — Mandatory. E.g. <i>2026 Alice Music</i></li>
-  <li><b>Artist</b> — Optional.</li>
-  <li><b>Title</b> — Optional.</li>
-  <li><b>Purpose</b> — Optional. E.g. <i>Promo Copy</i>, <i>Review</i>, <i>Mastering Reference</i></li>
-  <li><b>Other</b> — Optional free-form field.</li>
+  <li><b>Copyright *</b> - Mandatory. E.g. <i>2026 Alice Music</i></li>
+  <li><b>Artist</b> - Optional.</li>
+  <li><b>Title</b> - Optional.</li>
+  <li><b>Purpose</b> - Optional. E.g. <i>Promo Copy</i>, <i>Review</i>, <i>Mastering Reference</i></li>
+  <li><b>Other</b> - Optional free-form field.</li>
 </ul>
 <p>Internally the fields are concatenated as:
 <code>Copyright:...|Artist:...|Title:...|Purpose:...|Other:...</code>
@@ -91,18 +106,32 @@ and passed to HMAC-SHA256.</p>
 
 <h4>Options</h4>
 <ul>
-  <li><b>Audiowmark Key</b> — Select the key to use for embedding.
+  <li><b>Audiowmark Key</b> - Select the key to use for embedding.
       The key controls which frequency bands are modified.
       Without it, the watermark cannot be decoded.
       Managed in the Key Management tab.</li>
-  <li><b>HMAC Secret</b> — Select the secret used to compute the payload hash.
+  <li><b>HMAC Secret</b> - Select the secret used to compute the payload hash.
       Without it, the database entry cannot be verified during decoding.
       Managed in the Key Management tab.</li>
-  <li><b>Strength</b> — Range 5.0–20.0, default 10.0 (steps of 0.5).
+  <li><b>Strength</b> - Range 5.0–20.0, default 10.0 (steps of 0.5).
       Higher values make the watermark more robust against lossy re-encoding
       and format conversions, but slightly more audible.
       The default of 10 survives MP3/OGG at 128 kbit/s or higher.
       Use 15+ for resilience against multiple conversions or low bitrates (64 kbit/s).</li>
+</ul>
+
+<h4>Metadata and Cover Art Preservation</h4>
+<p>
+When ffmpeg/ffprobe is available, Audiowmark Desktop automatically carries the following
+from the input file to the output, regardless of format:
+</p>
+<ul>
+  <li><b>Audio tags</b> - title, artist, album, genre, year, composer, comment, and all other tags
+      present in the input. Works for WAV (RIFF INFO), MP3 (ID3), and FLAC (Vorbis comments).</li>
+  <li><b>Embedded cover art</b> - album art images embedded in the input are copied to the output
+      without re-encoding.</li>
+  <li><b>Bitrate matching</b> - MP3 output is re-encoded at the same bitrate as the input
+      (minimum 64 kbit/s).</li>
 </ul>
 
 <h4>What Happens on Embed</h4>
@@ -110,10 +139,12 @@ and passed to HMAC-SHA256.</p>
   <li>Metadata fields are joined into a pipe-separated string.</li>
   <li>HMAC-SHA256 is computed using the selected HMAC secret. The first 128 bits
       of the digest become the payload.</li>
-  <li>The mapping <code>payload → metadata + key name + secret name</code> is
+  <li>The mapping <code>payload - metadata + key name + secret name</code> is
       saved to <code>watermark_database.json</code> in the Keys Directory.</li>
-  <li><code>audiowmark add --key ... --strength ... input output payload</code>
-      is executed. For MP3 input, ffmpeg is used as upstream pipe.</li>
+  <li><code>audiowmark add</code> runs. For MP3 input, the file is first decoded to
+      a temporary WAV via ffmpeg.</li>
+  <li>Tags and cover art from the input are written to the output via ffmpeg stream copy.</li>
+  <li>For MP3 output, ffmpeg re-encodes the watermarked WAV to MP3 at the original bitrate.</li>
 </ol>
 
 <hr/>
@@ -148,19 +179,19 @@ It controls the pseudo-random embedding positions in the audio spectrum.
 <b>Keep this secret.</b> Anyone with the key can decode and losslessly
 remove your watermarks.</p>
 <ul>
-  <li><b>Generate New Key</b> — Enter a display name; the file is named after it.
+  <li><b>Generate New Key</b> - Enter a display name; the file is named after it.
       The name is stored inside the key file via <code>--name</code>.</li>
-  <li><b>Delete</b> — Irreversible. All files watermarked with this key
+  <li><b>Delete</b> - Irreversible. All files watermarked with this key
       become permanently undecodable without a backup.</li>
 </ul>
 
 <h4>HMAC Secrets (.hmac)</h4>
 <p>A 256-bit random secret used to compute the payload hash.
-Independent from the audiowmark key — compromising one does not compromise the other.</p>
+Independent from the audiowmark key - compromising one does not compromise the other.</p>
 <ul>
-  <li><b>Generate New Secret</b> — Creates a file containing 32 random hex bytes
+  <li><b>Generate New Secret</b> - Creates a file containing 32 random hex bytes
       (256 bits). File permissions are set to 600.</li>
-  <li><b>Delete</b> — Irreversible. Existing database entries become unmatchable:
+  <li><b>Delete</b> - Irreversible. Existing database entries become unmatchable:
       the watermark signal in the audio remains, but the hash cannot be verified
       against metadata without the secret.</li>
 </ul>
@@ -170,12 +201,12 @@ Independent from the audiowmark key — compromising one does not compromise the
 <h3>Security Model</h3>
 <table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">
   <tr><th>Property</th><th>This Tool</th></tr>
-  <tr><td>Payload readable without key</td><td style="color:green;">No — private audiowmark key required</td></tr>
-  <tr><td>Payload forgeable</td><td style="color:green;">No — HMAC secret required</td></tr>
-  <tr><td>Watermark removable losslessly</td><td style="color:green;">No — private audiowmark key required</td></tr>
-  <tr><td>False positives accepted</td><td style="color:green;">No — database lookup required</td></tr>
-  <tr><td>Metadata recoverable from payload alone</td><td style="color:green;">No — one-way HMAC</td></tr>
-  <tr><td>Multiple key rotation</td><td style="color:green;">Yes — all keys tried on decode</td></tr>
+  <tr><td>Payload readable without key</td><td style="color:green;">No - private audiowmark key required</td></tr>
+  <tr><td>Payload forgeable</td><td style="color:green;">No - HMAC secret required</td></tr>
+  <tr><td>Watermark removable losslessly</td><td style="color:green;">No - private audiowmark key required</td></tr>
+  <tr><td>False positives accepted</td><td style="color:green;">No - database lookup required</td></tr>
+  <tr><td>Metadata recoverable from payload alone</td><td style="color:green;">No - one-way HMAC</td></tr>
+  <tr><td>Multiple key rotation</td><td style="color:green;">Yes - all keys tried on decode</td></tr>
 </table>
 
 <hr/>
@@ -210,6 +241,17 @@ possible even if you have all keys and secrets. <b>Back it up alongside your key
       click <i>Find &amp; Decode Watermark</i>. A database match shows who it
       was issued to.</li>
 </ol>
+
+<hr/>
+<p style="color:#999; font-size:11px; text-align:center;">
+  Audiowmark Desktop v{APP_VERSION} &mdash; Copyright &copy; 2026
+  <a href="https://github.com/huddx01">huddx01</a>,
+  <a href="https://github.com/Sojuzstudio">Sojuzstudio</a>.
+  Licensed under the
+  <a href="https://github.com/huddx01/audiowmark-desktop/blob/main/LICENSE">GNU GPL v3</a>.
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/huddx01/audiowmark-desktop">GitHub Repository</a>
+</p>
 
 </body></html>
 """
@@ -347,7 +389,7 @@ class KeyManagerWidget(QWidget):
             return
         path = Path(item.data(Qt.ItemDataRole.UserRole))
         reply = QMessageBox.question(
-            self, "Confirm Delete — Audiowmark Key",
+            self, "Confirm Delete - Audiowmark Key",
             f"Delete key '{path.name}'?\n\n"
             f"WARNING: This key controls the watermark embedding positions in the audio spectrum.\n"
             f"Without it, 'audiowmark get' will return NO results for any file watermarked with this key.\n"
@@ -376,7 +418,7 @@ class KeyManagerWidget(QWidget):
             QMessageBox.warning(self, "Warning", f"Secret '{hmac_path.name}' already exists.")
             return
 
-        # 32 random bytes as hex — 256-bit secret
+        # 32 random bytes as hex - 256-bit secret
         hmac_path.write_text(secrets.token_hex(32))
         hmac_path.chmod(0o600)
         self.refresh_lists()
@@ -387,10 +429,10 @@ class KeyManagerWidget(QWidget):
             return
         path = Path(item.data(Qt.ItemDataRole.UserRole))
         reply = QMessageBox.question(
-            self, "Confirm Delete — HMAC Secret",
+            self, "Confirm Delete - HMAC Secret",
             f"Delete HMAC secret '{path.name}'?\n\n"
             f"WARNING: This secret was used to compute the HMAC payload stored in the watermark database.\n"
-            f"Without it, previously created database entries CANNOT be re-verified —\n"
+            f"Without it, previously created database entries CANNOT be re-verified -\n"
             f"the watermark signal in the audio files remains intact, but the decoded hash\n"
             f"will no longer match any entry and the metadata (Copyright, Artist etc.) will be lost.\n\n"
             f"Make sure you have a backup before proceeding.\n\n"
@@ -422,14 +464,23 @@ class AudiowmarkGUI(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        self.setWindowTitle("Audiowmark-desktop")
+        self.setWindowTitle("Audiowmark Desktop")
         self.resize(820, 740)
 
         main_layout = QVBoxLayout()
 
+        self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+
         # ffmpeg check must happen before tabs are created so note labels can be set
         self.ffmpeg_proc      = None
         self.ffmpeg_available = self._check_ffmpeg()
+        self._cleanup_tmp      = None   # temp WAV path to delete after process
+        self._pending_mp3_out  = None   # final MP3 path when add encodes to MP3
+        self._pending_get_keys = []     # key paths for deferred get after ffmpeg
+        self._pending_outfile  = None   # final output path for tag injection
+        self._input_tags       = {}     # tags read from input file
+        self._input_bitrate    = None   # bit_rate string from ffprobe (bps)
+        self._input_path       = None   # original input path (for cover art)
 
         # KeyManagerWidget restores its directory on init and emits keys_changed,
         # but the signal is connected only after the combo boxes are created below.
@@ -493,8 +544,8 @@ class AudiowmarkGUI(QWidget):
         self.ffmpeg_note_add = QLabel()
         self.ffmpeg_note_add.setWordWrap(True)
 
-        file_layout.addRow("Input File (WAV / MP3 / FLAC):", row_in)
-        file_layout.addRow("Output File (WAV / FLAC):", row_out)
+        file_layout.addRow("Input File (WAV / MP3 / FLAC / AIFF):", row_in)
+        file_layout.addRow("Output File (WAV / MP3 / FLAC / AIFF):", row_out)
         file_layout.addRow(self.ffmpeg_note_add)
         file_group.setLayout(file_layout)
 
@@ -508,7 +559,7 @@ class AudiowmarkGUI(QWidget):
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText("Optional")
         self.purpose_input = QLineEdit()
-        self.purpose_input.setPlaceholderText("Optional — e.g. Review Copy, Promo")
+        self.purpose_input.setPlaceholderText("Optional - e.g. Review Copy, Promo")
         self.other_input = QLineEdit()
         self.other_input.setPlaceholderText("Optional")
         meta_layout.addRow("Copyright *:", self.copyright_input)
@@ -518,7 +569,7 @@ class AudiowmarkGUI(QWidget):
         meta_layout.addRow("Other:",       self.other_input)
         meta_group.setLayout(meta_layout)
 
-        # Options — key/hmac dropdowns populated from Key Management
+        # Options - key/hmac dropdowns populated from Key Management
         opts_group = QGroupBox("Options")
         opts_layout = QFormLayout()
 
@@ -621,8 +672,8 @@ class AudiowmarkGUI(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
-        help_view = QTextEdit()
-        help_view.setReadOnly(True)
+        help_view = QTextBrowser()
+        help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP_HTML)
         layout.addWidget(help_view)
         widget.setLayout(layout)
@@ -652,29 +703,30 @@ class AudiowmarkGUI(QWidget):
     # --- File dialogs ---
 
     def _browse_open(self, line_edit, title):
+        last_dir = self.settings.value("last_dir", "")
         path, _ = QFileDialog.getOpenFileName(
-            self, title, "", "Audio Files (*.wav *.mp3 *.flac);;All Files (*)"
+            self, title, last_dir, "Audio Files (*.wav *.mp3 *.flac *.aiff *.aif);;All Files (*)"
         )
         if path:
+            self.settings.setValue("last_dir", str(Path(path).parent))
             line_edit.setText(path)
 
     def _browse_save(self, line_edit, title):
+        last_dir = self.settings.value("last_dir", "")
         path, _ = QFileDialog.getSaveFileName(
-            self, title, "", "Audio Files (*.wav *.flac *.aiff);;WAV (*.wav);;FLAC (*.flac);;AIFF (*.aiff);;All Files (*)"
+            self, title, last_dir,
+            "Audio Files (*.wav *.mp3 *.flac *.aiff);;WAV (*.wav);;MP3 (*.mp3);;FLAC (*.flac);;AIFF (*.aiff);;All Files (*)"
         )
         if path:
+            self.settings.setValue("last_dir", str(Path(path).parent))
             line_edit.setText(path)
 
     def _auto_set_output(self, input_path):
-        """Auto-populate output path based on input path.
-        MP3 input defaults to WAV output since MP3 write support depends on libsndfile version.
-        All other formats keep their extension."""
         if not input_path.strip():
             return
-        p      = Path(input_path.strip())
-        ext    = p.suffix.lower()
-        # MP3 output requires libsndfile >= 1.1.0 which is not universally available
-        out_ext = ".wav" if ext == ".mp3" else ext if ext in (".wav", ".flac", ".aiff") else ".wav"
+        p       = Path(input_path.strip())
+        ext     = p.suffix.lower()
+        out_ext = ext if ext in (".mp3", ".wav", ".flac", ".aiff") else ".wav"
         out_path = p.parent / f"{p.stem}_watermarked{out_ext}"
         self.add_out_input.setText(str(out_path))
 
@@ -764,6 +816,10 @@ class AudiowmarkGUI(QWidget):
         }
         self._save_database(db)
 
+        self._input_tags, self._input_bitrate = self._probe_input(infile)
+        self._input_path      = infile
+        self._pending_outfile = outfile
+
         self.log_output.clear()
         self.log_output.append(f"Metadata              : {metadata_string}")
         self.log_output.append(f"Used Audiowmark Key   : {key_name}")
@@ -771,7 +827,27 @@ class AudiowmarkGUI(QWidget):
         self.log_output.append(
             f"Generated HMAC Payload: {payload}  (HMAC-SHA256, first 128 bits)\n"
         )
+        if self._input_tags:
+            self.log_output.append(
+                f"[Input tags detected: {', '.join(self._input_tags.keys())}]\n"
+            )
         self._toggle_buttons(False)
+
+        is_mp3_out = Path(outfile).suffix.lower() == ".mp3"
+        if is_mp3_out:
+            if not self.ffmpeg_available:
+                QMessageBox.critical(self, "Error",
+                    "MP3 output requires ffmpeg, but it was not found in PATH.\n"
+                    "Please install ffmpeg and restart the application.")
+                self._toggle_buttons(True)
+                return
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            self._cleanup_tmp     = tmp.name
+            self._pending_mp3_out = outfile
+            effective_out = tmp.name
+        else:
+            effective_out = outfile
 
         if Path(infile).suffix.lower() == ".mp3":
             if not self.ffmpeg_available:
@@ -785,7 +861,7 @@ class AudiowmarkGUI(QWidget):
                 ["add", "--input-format", "wav-pipe",
                  "--key", key_path,
                  "--strength", str(self.strength_input.value()),
-                 "-", outfile, payload],
+                 "-", effective_out, payload],
                 infile
             )
         else:
@@ -793,7 +869,7 @@ class AudiowmarkGUI(QWidget):
                 "add",
                 "--key", key_path,
                 "--strength", str(self.strength_input.value()),
-                infile, outfile, payload,
+                infile, effective_out, payload,
             ])
 
     def _run_get_watermark(self):
@@ -825,12 +901,15 @@ class AudiowmarkGUI(QWidget):
                     "Please install ffmpeg and restart the application.")
                 self._toggle_buttons(True)
                 return
-            self.log_output.append("[MP3 input: routing through ffmpeg pipe]\n")
-            args = ["get", "--input-format", "wav-pipe"]
-            for kp in key_paths:
-                args += ["--key", kp]
-            args.append("-")
-            self._start_with_ffmpeg_pipe(args, infile)
+            self.log_output.append("[MP3 input: converting to temp WAV via ffmpeg]\n")
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            self._cleanup_tmp      = tmp.name
+            self._pending_get_keys = key_paths
+            self.ffmpeg_proc = QProcess()
+            self.ffmpeg_proc.finished.connect(self._on_ffmpeg_to_wav_done)
+            self.ffmpeg_proc.readyReadStandardError.connect(self._handle_ffmpeg_stderr)
+            self.ffmpeg_proc.start("ffmpeg", ["-y", "-i", infile, tmp.name])
         else:
             args = ["get"]
             for kp in key_paths:
@@ -851,7 +930,7 @@ class AudiowmarkGUI(QWidget):
     def _update_ffmpeg_notes(self):
         """Set ffmpeg availability note labels on both tabs."""
         if self.ffmpeg_available:
-            msg   = "MP3 input: ffmpeg found — full-length processing enabled."
+            msg   = "MP3 input: ffmpeg found - full-length processing enabled."
             style = "color: #2a7a2a; font-style: italic; font-size: 11px;"
         else:
             msg   = "WARNING: ffmpeg not found in PATH. MP3 input will be disabled. Install ffmpeg to enable it."
@@ -859,6 +938,96 @@ class AudiowmarkGUI(QWidget):
         for label in (self.ffmpeg_note_add, self.ffmpeg_note_get):
             label.setText(msg)
             label.setStyleSheet(style)
+
+    def _on_ffmpeg_to_wav_done(self, exit_code, _status):
+        """Called after ffmpeg converts an MP3 to temp WAV for `get`."""
+        if exit_code != 0:
+            self.log_output.append("ffmpeg: MP3 conversion failed.\n")
+            self._cleanup_temp_files()
+            self._toggle_buttons(True)
+            self.log_output.append("\n=== Task Finished ===")
+            return
+        args = ["get"]
+        for kp in self._pending_get_keys:
+            args += ["--key", kp]
+        args.append(self._cleanup_tmp)
+        self.process.start("audiowmark", args)
+
+    def _on_mp3_encode_done(self, exit_code, _status, tmp_wav):
+        """Called after ffmpeg encodes the temp WAV to the final MP3."""
+        try:
+            os.unlink(tmp_wav)
+        except OSError:
+            pass
+        self._cleanup_tmp     = None
+        self._pending_outfile = None
+        self._toggle_buttons(True)
+        status = "" if exit_code == 0 else " (ffmpeg MP3 encoding failed)"
+        self.log_output.append(f"\n=== Task Finished{status} ===")
+
+    def _cleanup_temp_files(self):
+        if self._cleanup_tmp:
+            try:
+                os.unlink(self._cleanup_tmp)
+            except OSError:
+                pass
+            self._cleanup_tmp = None
+
+    def _probe_input(self, path):
+        """Run ffprobe on path; return (tags_dict, bitrate_str_or_None)."""
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_format", "-show_streams", path],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                return {}, None
+            data    = json.loads(result.stdout)
+            tags    = {k.lower(): v
+                       for k, v in data.get("format", {}).get("tags", {}).items()}
+            bitrate = data.get("format", {}).get("bit_rate")
+            return tags, bitrate
+        except Exception:
+            return {}, None
+
+    def _meta_flags(self, tags):
+        """Return flat list of ffmpeg -metadata key=value flags."""
+        flags = []
+        for k, v in tags.items():
+            flags += ["-metadata", f"{k}={v}"]
+        return flags
+
+    def _inject_tags_inplace(self, filepath, tags, cover_source=None):
+        """Copy metadata and cover art into a WAV/FLAC file via ffmpeg stream-copy."""
+        if not cover_source and not tags:
+            return
+        suffix = Path(filepath).suffix
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=suffix, delete=False, dir=Path(filepath).parent
+        )
+        tmp.close()
+        try:
+            cmd = ["ffmpeg", "-y", "-i", filepath]
+            if cover_source:
+                # Use original as metadata/cover source - more reliable than re-injecting
+                # individual tags probed via ffprobe (RIFF INFO keys survive intact)
+                cmd += ["-i", cover_source,
+                        "-map", "0:a", "-map_metadata", "1", "-map", "1:v?",
+                        "-c", "copy"]
+            else:
+                cmd += self._meta_flags(tags) + ["-map", "0", "-c", "copy"]
+            cmd.append(tmp.name)
+            r = subprocess.run(cmd, capture_output=True, timeout=120)
+            if r.returncode == 0:
+                os.replace(tmp.name, filepath)
+            else:
+                os.unlink(tmp.name)
+        except Exception:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
 
     def _start_with_ffmpeg_pipe(self, audiowmark_args, mp3_path):
         """Route MP3 input through ffmpeg to avoid libmpg123 frame count truncation.
@@ -918,8 +1087,41 @@ class AudiowmarkGUI(QWidget):
         self.log_output.append(data)
 
     def _process_finished(self):
-        self._toggle_buttons(True)
-        self.log_output.append("\n=== Task Finished ===")
+        if self._pending_mp3_out:
+            tmp_wav = self._cleanup_tmp
+            mp3_out = self._pending_mp3_out
+            self._pending_mp3_out = None
+            self.log_output.append("[Encoding WAV to MP3 via ffmpeg...]\n")
+
+            ffmpeg_args = ["-y", "-i", tmp_wav]
+            if self._input_path:
+                ffmpeg_args += ["-i", self._input_path,
+                                "-map", "0:a", "-map", "1:v?",
+                                "-map_metadata", "1", "-c:v", "copy"]
+            else:
+                ffmpeg_args += self._meta_flags(self._input_tags)
+            if self._input_bitrate:
+                kbps = max(64, int(self._input_bitrate) // 1000)
+                ffmpeg_args += ["-b:a", f"{kbps}k"]
+            else:
+                ffmpeg_args += ["-q:a", "2"]
+            ffmpeg_args += ["-id3v2_version", "3"]
+            ffmpeg_args.append(mp3_out)
+
+            self.ffmpeg_proc = QProcess()
+            self.ffmpeg_proc.readyReadStandardError.connect(self._handle_ffmpeg_stderr)
+            self.ffmpeg_proc.finished.connect(
+                lambda code, status: self._on_mp3_encode_done(code, status, tmp_wav)
+            )
+            self.ffmpeg_proc.start("ffmpeg", ffmpeg_args)
+        else:
+            if self._pending_outfile and (self._input_tags or self._input_path):
+                self.log_output.append("[Copying tags and cover art to output file...]\n")
+                self._inject_tags_inplace(self._pending_outfile, self._input_tags, cover_source=self._input_path)
+            self._pending_outfile = None
+            self._cleanup_temp_files()
+            self._toggle_buttons(True)
+            self.log_output.append("\n=== Task Finished ===")
 
     # --- UI helpers ---
 

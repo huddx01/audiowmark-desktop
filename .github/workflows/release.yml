@@ -45,21 +45,52 @@ jobs:
           name: deb-${{ matrix.arch }}
           path: dist/*.deb
 
+  build-mac:
+    name: Build macOS .dmg (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build .dmg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packaging/build_mac.sh "$VERSION"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          path: dist/*.dmg
+
   release:
     name: Create GitHub Release
-    needs: build-deb
+    needs: [build-deb, build-mac]
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all .deb artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: deb-*
+          pattern: '{deb-*,mac-*}'
           merge-multiple: true
           path: dist/
 
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.deb
+          files: |
+            dist/*.deb
+            dist/*.dmg
           generate_release_notes: true
