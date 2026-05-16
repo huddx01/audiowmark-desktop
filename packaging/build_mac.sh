@@ -35,7 +35,7 @@ BREW_PREFIX="$($BREW --prefix)"
 # -- 2. Dependencies -----------------------------------------------------------
 echo "Installing brew dependencies ..."
 $BREW install \
-    python@3.14 pyqt pyinstaller \
+    python@3.13 pyqt pyinstaller \
     pkg-config autoconf automake libtool \
     libsndfile fftw libgcrypt mpg123 ffmpeg \
     zstd
