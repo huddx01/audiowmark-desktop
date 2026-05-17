@@ -61,21 +61,54 @@ for SIZE in 16 32 48 64 128 256 512; do
     fi
 done
 
-# -- 4. Build audiowmark from source ------------------------------------------
+# -- 4. Build zita-resampler from source (static) -----------------------------
 BUILD_TMP="$(mktemp -d)"
 trap 'rm -rf "$BUILD_TMP"' EXIT
 
+ZITA_VERSION="1.11.2"
+INSTALL_PREFIX="$BUILD_TMP/prefix"
+mkdir -p "$INSTALL_PREFIX"/{lib/pkgconfig,include,bin}
+
+echo "Fetching zita-resampler $ZITA_VERSION ..."
+curl -fsSL \
+    "http://kokkinizita.linuxaudio.org/linuxaudio/downloads/zita-resampler-${ZITA_VERSION}.tar.xz" \
+    | tar -xJf - -C "$BUILD_TMP"
+
+pushd "$BUILD_TMP/zita-resampler-${ZITA_VERSION}"
+g++ -O2 -fPIC -std=c++14 -c source/*.cc -I source/
+ar rcs "$INSTALL_PREFIX/lib/libzita-resampler.a" ./*.o
+mkdir -p "$INSTALL_PREFIX/include/zita-resampler"
+cp source/zita-resampler/*.h "$INSTALL_PREFIX/include/zita-resampler/"
+popd
+
+cat > "$INSTALL_PREFIX/lib/pkgconfig/zita-resampler.pc" <<EOF
+prefix=$INSTALL_PREFIX
+exec_prefix=\${prefix}
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: zita-resampler
+Description: zita-resampler library
+Version: $ZITA_VERSION
+Libs: -L\${libdir} -lzita-resampler
+Cflags: -I\${includedir}
+EOF
+
+# -- 5. Build audiowmark from source (links zita-resampler statically) --------
 echo "Fetching audiowmark $AUDIOWMARK_VERSION ..."
 curl -fsSL "https://github.com/swesterfeld/audiowmark/releases/download/${AUDIOWMARK_VERSION}/audiowmark-${AUDIOWMARK_VERSION}.tar.zst" \
     | tar --use-compress-program=unzstd -xf - -C "$BUILD_TMP"
 
 pushd "$BUILD_TMP/audiowmark-${AUDIOWMARK_VERSION}"
-./configure --prefix="$BUILD_TMP/install" --disable-dependency-tracking
+PKG_CONFIG_PATH="$INSTALL_PREFIX/lib/pkgconfig" \
+    ./configure --prefix="$INSTALL_PREFIX" --disable-dependency-tracking \
+    LDFLAGS="-L$INSTALL_PREFIX/lib" \
+    CPPFLAGS="-I$INSTALL_PREFIX/include"
 make -j"$(nproc)"
 make install
 popd
 
-install -m 0755 "$BUILD_TMP/install/bin/audiowmark" \
+install -m 0755 "$INSTALL_PREFIX/bin/audiowmark" \
     "$STAGING/usr/lib/audiowmark-desktop/audiowmark"
 
 # -- 5. Installed-Size ---------------------------------------------------------
